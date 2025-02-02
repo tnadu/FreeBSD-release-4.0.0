@@ -35,9 +35,18 @@
  */
 
 /*
- * Pseudo-teletype Driver
+ * Pseudo-teletype Driver - PTY driver
  * (Actually two drivers, requiring two entries in 'cdevsw')
  */
+
+// TTY is the terminal (more like the terminal emulator from the old physical teletypewriter)
+// it runs in the kernel and sends characters to the TTY device driver, reads from it, and prints on the screen
+// PTY (pseudo TTY/terminal) is also a teletype emulator, but runs in the user land
+// PTY asks the kernel for a pair of character files (PTY master and PTY slave)
+// example: on the master you could have terminal emulator and on the slave you could have shell
+// between them sits the TTY driver (line discipline, session management, etc), which copies stuff to/from master and slave
+// example: XTerm is an example of such a PTY, a teminal emulator which runs in the userland
+//
 #include "pty.h"		/* XXX */
 #include "opt_compat.h"
 #include <sys/param.h>
@@ -111,13 +120,14 @@ static struct cdevsw ptc_cdevsw = {
 
 #define BUFSIZ 100		/* Chunk size iomoved to/from user */
 
+// ioctl: device specific input/output
 struct	pt_ioctl {
 	int	pt_flags;
-	struct	selinfo pt_selr, pt_selw;
+	struct	selinfo pt_selr, pt_selw; // selinfo -> structure pids and flags corepsonding to processes whic need to be notified when I/O becomes available
 	u_char	pt_send;
-	u_char	pt_ucntl;
-	struct tty pt_tty;
-	dev_t	devs, devc;
+	u_char	pt_ucntl; // ucntl: user control
+	struct tty pt_tty; // tty driver 
+	dev_t	devs, devc; // pair of devices
 	struct	prison *pt_prison;
 };
 
@@ -140,7 +150,7 @@ static void
 ptyinit(n)
 	int n;
 {
-	dev_t devs, devc;
+	dev_t devs, devc; // devices for pts, ptc?
 	char *names = "pqrsPQRS";
 	struct pt_ioctl *pt;
 
@@ -161,6 +171,7 @@ ptyinit(n)
 }
 
 /*ARGSUSED*/
+// ptsopen -> used
 static	int
 ptsopen(dev, flag, devtype, p)
 	dev_t dev;
@@ -174,10 +185,13 @@ ptsopen(dev, flag, devtype, p)
 	struct pt_ioctl *pti;
 
 	/*
-	 * XXX: Gross hack for DEVFS:
+	 * XXX: Gross hack for DEVFS: 
 	 * If we openned this device, ensure we have the
 	 * next one too, so people can open it.
 	 */
+    // DEVFS -> Device Virtual File System
+    // minr = minor id of requested device, identifying a specific instance of a device in a class of devices
+    // major id is the id of the class of devices
 	minr = lminor(dev);
 	if (minr < 255) {
 		nextdev = makedev(major(dev), minr + 1);
