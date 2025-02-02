@@ -940,13 +940,17 @@ suser_xxx(cred, proc, flag)
 		return (EPERM);
 	}
 	if (!cred) 
-		cred = proc->p_ucred;
-	if (cred->cr_uid != 0) 
+		cred = proc->p_ucred; // if cred is null -> take credentials of the current process user
+                              //
+	if (cred->cr_uid != 0) // if current user is not root -> operation not permitted
 		return (EPERM);
-	if (proc && proc->p_prison && !(flag & PRISON_ROOT))
-		return (EPERM);
+
+	if (proc && proc->p_prison && !(flag & PRISON_ROOT)) // if process is jailed and user is not prison_root
+		return (EPERM); // operation not permitted
+
 	if (proc)
 		proc->p_acflag |= ASU;
+
 	return (0);
 }
 
@@ -960,19 +964,22 @@ p_trespass(struct proc *p1, struct proc *p2)
 
 	if (p1 == p2)
 		return (0);
-	if (!PRISON_CHECK(p1, p2))
-		return (ESRCH);
-	if (p1->p_cred->p_ruid == p2->p_cred->p_ruid)
+	if (!PRISON_CHECK(p1, p2)) // MACRO: proc1 is in jail and proc2 is in other jail
+		return (ESRCH); // error-search -> proc2 "does not exist" -> proc isolation
+                        // UNIX error code (integer 3)
+                        //
+	if (p1->p_cred->p_ruid == p2->p_cred->p_ruid) // processes real user's id from credentials are the same
 		return (0);
-	if (p1->p_ucred->cr_uid == p2->p_cred->p_ruid)
+	if (p1->p_ucred->cr_uid == p2->p_cred->p_ruid) // prc 1 user credential is the same with proc 2 real user cred
 		return (0);
-	if (p1->p_cred->p_ruid == p2->p_ucred->cr_uid)
+	if (p1->p_cred->p_ruid == p2->p_ucred->cr_uid) // reverse order
 		return (0);
-	if (p1->p_ucred->cr_uid == p2->p_ucred->cr_uid)
+	if (p1->p_ucred->cr_uid == p2->p_ucred->cr_uid) // user cred of the procs are the same
 		return (0);
-	if (!suser_xxx(0, p1, PRISON_ROOT))
-		return (0);
-	return (EPERM);
+    // by this line if proc1 is in jail, proc2 is in the same jail
+	if (!suser_xxx(0, p1, PRISON_ROOT)) // if proc1 is in jail, check if is the prison_root
+		return (0);// check if p1 user is su, even if is in jail or not
+	return (EPERM); // otherwise operation not permitted
 }
 
 /*
