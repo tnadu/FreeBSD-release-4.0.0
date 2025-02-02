@@ -79,6 +79,10 @@ bail:
 int
 prison_ip(struct proc *p, int flag, u_int32_t *ip)
 {
+    // ip -> ip_obisnuit / 0.0.0.0
+    // ip_obisnuit verifica daca e ip-ul prisonului
+    // 0.0.0.0 iti da ip-ul prisonului
+    //
 	u_int32_t tmp;
 
 	if (!p->p_prison)
@@ -102,14 +106,18 @@ prison_ip(struct proc *p, int flag, u_int32_t *ip)
 void
 prison_remote_ip(struct proc *p, int flag, u_int32_t *ip)
 {
+    // daca e 127.0.0.1 -> ip prsion
+    //
 	u_int32_t tmp;
 
 	if (!p || !p->p_prison)
 		return;
+
 	if (flag)
 		tmp = *ip;
 	else
 		tmp = ntohl(*ip);
+
 	if (tmp == 0x7f000001) {
 		if (flag)
 			*ip = p->p_prison->pr_ip;
