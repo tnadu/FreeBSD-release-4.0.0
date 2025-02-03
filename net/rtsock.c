@@ -912,6 +912,9 @@ sysctl_iflist(af, w)
 		while ((ifa = ifa->ifa_link.tqe_next) != 0) {
 			if (af && af != ifa->ifa_addr->sa_family)
 				continue;
+			// when curproc is jailed and the current network interface
+			// is one other than that which corresponds to the prison
+			// IP address, ignore it
 			if (curproc->p_prison && prison_if(curproc, ifa->ifa_addr))
 				continue;
 			ifaaddr = ifa->ifa_addr;

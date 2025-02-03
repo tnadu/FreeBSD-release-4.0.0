@@ -80,66 +80,85 @@ bail:
 int
 prison_ip(struct proc *p, int flag, u_int32_t *ip)
 {
-    // ip -> ip_obisnuit / 0.0.0.0
-    // ip_obisnuit verifica daca e ip-ul prisonului
-    // 0.0.0.0 iti da ip-ul prisonului
-    //
+	// used in in_pcb.c/in_pcbbind(), which binds
+	// an IP address and a port to a socket;
+	// redirects attempts to bind to all IP addresses
+	// on all interfaces (0.0.0.0) to the prison IP
+	// address, in case process p is jailed;
+	// forbids jailed process p to bind to any other
+	// address other than that of its prison, and
+	// returns an error in such a case;
 	u_int32_t tmp;
 
-	if (!p->p_prison)
-		return (0);
-	if (flag) 
+	if (!p->p_prison)	// process is not jailed
+		return (0);		// no need to redirect or perform extra checks
+	if (flag) 			// when caller is certain no IP address format conversions need to be performed
 		tmp = *ip;
 	else
-		tmp = ntohl(*ip);
-	if (tmp == INADDR_ANY) {
-		if (flag) 
+		tmp = ntohl(*ip);	// network to host IP address format translation
+	if (tmp == INADDR_ANY) {	// ip is 0.0.0.0
+		// redirect ip to prison IP address
+		if (flag) 		// when caller is certain no IP address format conversions need to be performed
 			*ip = p->p_prison->pr_ip;
 		else
-			*ip = htonl(p->p_prison->pr_ip);
+			*ip = htonl(p->p_prison->pr_ip); // host to network IP address format translation
 		return (0);
 	}
-	if (p->p_prison->pr_ip != tmp)
-		return (1);
-	return (0);
+	if (p->p_prison->pr_ip != tmp)	// p attempts to bind to a valid IP address, other than that of its jail
+		return (1);					// this is forbidden
+	return (0);						// p attempts to bind to the IP address of its prison, which is allowed
 }
 
 void
 prison_remote_ip(struct proc *p, int flag, u_int32_t *ip)
 {
-    // daca e 127.0.0.1 -> ip prsion
-    //
+    // used in tcp_usrreq.c/tcp_usr_connect() and in
+	// udp_usrreq.c/udp_connect() when initiating
+	// outgoing connections;
+	// redirects attempts to reach localhost (127.0.0.1)
+	// to the prison IP address, in case process p is jailed;
+	// will not forbid attempts to reach other valid IP
+	// addresses of the host, since this is handled via
+	// routing tables;
 	u_int32_t tmp;
 
-	if (!p || !p->p_prison)
+	if (!p || !p->p_prison)	// process is not jailed
 		return;
 
-	if (flag)
+	if (flag)		// when caller is certain no IP address format conversions need to be performed
 		tmp = *ip;
 	else
-		tmp = ntohl(*ip);
+		tmp = ntohl(*ip); // network to host IP address format translation
 
-	if (tmp == 0x7f000001) {
-		if (flag)
+	if (tmp == 0x7f000001) {	// ip is 127.0.0.1
+		// redirect ip to prison IP address
+		if (flag)	// when caller is certain no IP address format conversions need to be performed
 			*ip = p->p_prison->pr_ip;
 		else
-			*ip = htonl(p->p_prison->pr_ip);
+			*ip = htonl(p->p_prison->pr_ip); // host to network IP address format translation
 		return;
 	}
-	return;
+	return;	// ip is the IP address of the prison, an invalid IP address or another valid IP address of the host
 }
 
 int
 prison_if(struct proc *p, struct sockaddr *sa)
 {
+	// used in if.c/ifconf() and in rtsock.c/sysctl_iflist(),
+	// to filter out any network interfaces which correspond
+	// to IP addresses other than that of the prison of p;
 	struct sockaddr_in *sai = (struct sockaddr_in*) sa;
 	int ok;
 
-	if (sai->sin_family != AF_INET)
-		ok = 0;
+	if (sai->sin_family != AF_INET)	// if the socket is not IPv4
+		ok = 0;						// all is well
+	// socket is IPv4 and IP addresses differ between the socket
+	// and the prison
 	else if (p->p_prison->pr_ip != ntohl(sai->sin_addr.s_addr))
-		ok = 1;
+		ok = 1;		// make socket invisible to p
+	// socket is IPv4 and IP addresses coincide between the socket
+	// and the prison
 	else
-		ok = 0;
+		ok = 0;		// all is well
 	return (ok);
 }
