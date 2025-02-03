@@ -122,20 +122,28 @@ static pid_t atopid __P((const char *, u_int));
  */
 static int
 procfs_open(ap)
+    // vop = virtual operation -> op on virtual node
+    // within VFS virtual file system
 	struct vop_open_args /* {
-		struct vnode *a_vp;
+		struct vnode *a_vp;  // virtual node
 		int  a_mode;
 		struct ucred *a_cred;
 		struct proc *a_p;
 	} */ *ap;
 {
-	struct pfsnode *pfs = VTOPFS(ap->a_vp);
+	struct pfsnode *pfs = VTOPFS(ap->a_vp); // process file-system node
+                                            //  takes private data of fs (v_data) of (vnode)ap->a_vp and casts it
+                                            //  to pfsnode -> proc fs node
 	struct proc *p1, *p2;
 
 	p2 = PFIND(pfs->pfs_pid);
 	if (p2 == NULL)
-		return (ENOENT);
-	if (pfs->pfs_pid && !PRISON_CHECK(ap->a_p, p2))
+		return (ENOENT); // no pid, no entity
+
+	if (pfs->pfs_pid && !PRISON_CHECK(ap->a_p, p2)) // there is a pid, is a_p argument inside vop_open_args
+                                                    // in prison, and if so, is in the same prison with 
+                                                    // p2, current process
+                                                    //
 		return (ENOENT);
 
 	switch (pfs->pfs_type) {
@@ -145,8 +153,9 @@ procfs_open(ap)
 			return (EBUSY);
 
 		p1 = ap->a_p;
+
 		if (p_trespass(p1, p2) &&
-		    !procfs_kmemaccess(p1))
+		    !procfs_kmemaccess(p1)) // trespass
 			return (EPERM);
 
 		if (ap->a_mode & FWRITE)
