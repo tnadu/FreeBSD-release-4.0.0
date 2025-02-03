@@ -1066,6 +1066,9 @@ ifconf(cmd, data)
 		for ( ; space > sizeof (ifr) && ifa;
 		    ifa = ifa->ifa_link.tqe_next) {
 			register struct sockaddr *sa = ifa->ifa_addr;
+			// when curproc is jailed and the current network interface
+			// is one other than that which corresponds to the prison
+			// IP address, ignore it
 			if (curproc->p_prison && prison_if(curproc, sa))
 				continue;
 			addrs++;

@@ -14,10 +14,10 @@
 #define _SYS_JAIL_H_
 
 struct jail {
-	u_int32_t	version;
-	char		*path;
-	char		*hostname;
-	u_int32_t	ip_number;
+	u_int32_t	version;	// in case future jail struct changes
+	char		*path;		// root path for the jail
+	char		*hostname;	// hostname of the jail (can/can't be modified from within the jail based on the `jail_set_hostname_allowed` sysctl)
+	u_int32_t	ip_number;	// IP address assigned to the jail (unique)
 };
 
 #ifndef _KERNEL
@@ -37,10 +37,13 @@ MALLOC_DECLARE(M_PRISON);
  */
 
 struct prison {
-	int		pr_ref;
-	char 		pr_host[MAXHOSTNAMELEN];
-	u_int32_t	pr_ip;
-	void		*pr_linux;
+	// path is missing, because chroot() will simply adjust
+	// the root directory (rdir and jdir vnode pointers) of
+	// the filedesc struct the process uses to access the filesystem
+	int		pr_ref;			// number of processes referencing this struct
+	char 		pr_host[MAXHOSTNAMELEN]; // passed from jail struct
+	u_int32_t	pr_ip;		// passed from jail struct
+	void		*pr_linux;	// used in i386 version to store info about a Linux compatibility layer (i386/linux/linux_mib.c)
 };
 
 /*
