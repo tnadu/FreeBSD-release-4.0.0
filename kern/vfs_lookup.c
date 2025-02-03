@@ -77,10 +77,9 @@
  */
 
 // IMPORTANT:
-// does LOOKUP / CREATE / DELETE / RENAME
+// in our context does LOOKUP for a specified path
 // ndp->ni_topdir = fdp->fd_jdir;
 // ni_topdir is assiged fd_jdir, which is only modified at the first chroot.
-// 
 // ndp also contains the target path of chroot in ni_dirp
 int namei(ndp)
 	register struct nameidata *ndp;
@@ -91,6 +90,8 @@ int namei(ndp)
 	struct iovec aiov;		/* uio for reading symbolic links */
 	struct uio auio;
 	int error, linklen;
+
+	// cnd = componentname of ndp
 	struct componentname *cnp = &ndp->ni_cnd;
 	// p is the process that calls namei from chdir
 	struct proc *p = cnp->cn_proc;
@@ -101,7 +102,8 @@ int namei(ndp)
 	    ("namei: nameiop contaminated with flags"));
 	KASSERT((cnp->cn_flags & OPMASK) == 0,
 	    ("namei: flags contaminated with nameiops"));
-	// fdp = filedesc* of process p
+
+	// fdp = filedesc* of process p, as in chroot
 	fdp = cnp->cn_proc->p_fd;
 
 	/*
@@ -137,17 +139,25 @@ int namei(ndp)
 	/*
 	 * Get starting point for the translation.
 	 */
+	// assigns ni_rootdir = root directory
+	// assigns ni_topdir = jail root directory
+	// assigns dp = current directory:
+	// 			- dp is fd_rdir in case path starts with '/', else fd_cdir
+
 	ndp->ni_rootdir = fdp->fd_rdir;
 	ndp->ni_topdir = fdp->fd_jdir;
-
-	// dp = current directory of calling process p at any point. Starts with fd_cdir.
 	dp = fdp->fd_cdir;
+
 	VREF(dp);
 	for (;;) {
 		/*
 		 * Check if root directory should replace current directory.
 		 * Done at start of translation and after symbolic link.
 		 */
+
+		// cn_nameptr = pointer to target path
+
+		// removes consecutive '/'
 		cnp->cn_nameptr = cnp->cn_pnbuf;
 		if (*(cnp->cn_nameptr) == '/') {
 			vrele(dp);
@@ -155,11 +165,12 @@ int namei(ndp)
 				cnp->cn_nameptr++;
 				ndp->ni_pathlen--;
 			}
+			// assigns dp = root directory
 			dp = ndp->ni_rootdir;
 			VREF(dp);
 		}
 		ndp->ni_startdir = dp;
-		error = lookup(ndp);  // IMPORTANT 
+		error = lookup(ndp);  // IMPORTANT
 		if (error) {
 			zfree(namei_zone, cnp->cn_pnbuf);
 			return (error);
@@ -298,6 +309,8 @@ int lookup(ndp)
 	rdonly = cnp->cn_flags & RDONLY;
 	ndp->ni_dvp = NULL;
 	cnp->cn_flags &= ~ISSYMLINK;
+	
+	// set dp as the starting directory
 	dp = ndp->ni_startdir;
 	ndp->ni_startdir = NULLVP;
 	vn_lock(dp, LK_EXCLUSIVE | LK_RETRY, p);
@@ -339,11 +352,8 @@ dirloop:
 	 * trailing slashes to handle symlinks, existing non-directories
 	 * and non-existing files that won't be directories specially later.
 	 */
-	
-	// BEFORE: //../
-	// AFTER:  ../
 
-	// removes consecutive '/' 
+	// removes consecutive '/'
 	trailing_slash = 0;
 	while (*cp == '/' && (cp[1] == '/' || cp[1] == '\0')) {
 		cp++;
@@ -388,6 +398,7 @@ dirloop:
 			ndp->ni_dvp = dp;
 			VREF(dp);
 		}
+		// set result vnode as dp (previously set as starting directory)
 		ndp->ni_vp = dp;
 		if (!(cnp->cn_flags & (LOCKPARENT | LOCKLEAF)))
 			VOP_UNLOCK(dp, 0, p);
@@ -430,6 +441,7 @@ dirloop:
 			if (dp == ndp->ni_rootdir || 
 			    dp == ndp->ni_topdir || 
 			    dp == rootvnode) {
+				// instead of continuing upwards, the lookup continues with the same directory
 				ndp->ni_dvp = dp;
 				ndp->ni_vp = dp;
 
