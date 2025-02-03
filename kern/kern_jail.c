@@ -29,46 +29,47 @@ MALLOC_DEFINE(M_PRISON, "prison", "Prison structures");
 SYSCTL_NODE(, OID_AUTO, jail, CTLFLAG_RW, 0,
     "Jail rules");
 
-int	jail_set_hostname_allowed = 1;
+int	jail_set_hostname_allowed = 1;	// sysctl to allow/disallow processes in jail to change the hostname of the jail
 SYSCTL_INT(_jail, OID_AUTO, set_hostname_allowed, CTLFLAG_RW,
     &jail_set_hostname_allowed, 0,
     "Processes in jail can set their hostnames");
 
 int
 jail(p, uap)
-        struct proc *p;
-        struct jail_args /* {
+        struct proc *p; 			// process to be placed in a jail, which performed the syscall
+        struct jail_args /* {		// contains pointer to the jail struct passed by p
                 syscallarg(struct jail *) jail;
         } */ *uap;
 {
 	int error;
-	struct prison *pr;
-	struct jail j;
-	struct chroot_args ca;
+	struct prison *pr;	// pointer to prison struct in p
+	struct jail j;		// copy of the jail from user-space
+	struct chroot_args ca;	// contains path which is passed to chroot
 
-	error = suser(p);
+	error = suser(p);	// check if the calling process is a host root (jail() cannot be called from a process already in a jail)
 	if (error)
 		return (error);
-	error = copyin(uap->jail, &j, sizeof j);
+	error = copyin(uap->jail, &j, sizeof j);	// copy the jail from user space
 	if (error)
 		return (error);
-	if (j.version != 0)
+	if (j.version != 0)		// current implementation is at version 0
 		return (EINVAL);
-	MALLOC(pr, struct prison *, sizeof *pr , M_PRISON, M_WAITOK);
-	bzero((caddr_t)pr, sizeof *pr);
-	error = copyinstr(j.hostname, &pr->pr_host, sizeof pr->pr_host, 0);
+	MALLOC(pr, struct prison *, sizeof *pr , M_PRISON, M_WAITOK);	// allocate prison for process p
+	bzero((caddr_t)pr, sizeof *pr);		// probably zero-out the allocated memory?
+	error = copyinstr(j.hostname, &pr->pr_host, sizeof pr->pr_host, 0);		// copy hostname provided in jail to prison
 	if (error) 
 		goto bail;
-	pr->pr_ip = j.ip_number;
+	pr->pr_ip = j.ip_number;	// copy IP address provided in jail to prison
 
-	ca.path = j.path;
-	error = chroot(p, &ca);
+	ca.path = j.path;	// prepare the chroot call
+	error = chroot(p, &ca);		// p->p_fd->fd_rdir will now be the provided path (root dir of p)
 	if (error)
 		goto bail;
 
 	pr->pr_ref++;
-	p->p_prison = pr;
-	p->p_flag |= P_JAILED;
+	p->p_prison = pr;	// attach prison to p
+	p->p_flag |= P_JAILED;	// add flag to mark p as jailed
+	// &p->p_prison gets copied to any forks of p
 	return (0);
 
 bail:
