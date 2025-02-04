@@ -922,32 +922,53 @@ groupmember(gid, cred)
  * indicating use of super-powers.
  * Returns 0 or error.
  */
+
+// this function queries whether the user has root privileges or not
+// it is a wrapper over function suser_xxx, which takes 3 args
+// it is used only for the root user outside any jail
+// as the *flag* field is null, implying no extra conditions
+// like any prison affiliation
 int
 suser(p)
-	struct proc *p;
+	struct proc *p; // it checks user credentials for given process p
 {
 	return suser_xxx(0, p, 0);
 }
-
+// this function extends the superuser check 
+// to accomodate checking for any jailed superusers
+// it does so by checking if PRISON_ROOT flag is set
 int
 suser_xxx(cred, proc, flag)
-	struct ucred *cred;
-	struct proc *proc;
+	struct ucred *cred; // the credentials of the user within queried process
+	struct proc *proc;  // current process
 	int flag;
 {
+    // no user credential or even process -> operation not permitted
 	if (!cred && !proc) {
 		printf("suser_xxx(): THINK!\n");
 		return (EPERM);
 	}
+    // if there are no credentials given as parameters
+    // query the process structure pointer
 	if (!cred) 
-		cred = proc->p_ucred; // if cred is null -> take credentials of the current process user
-                              //
-	if (cred->cr_uid != 0) // if current user is not root -> operation not permitted
+		cred = proc->p_ucred;
+    // extract the uid from the user credentials
+    // if uid == 0 -> this user is root
+    // otherwise, operation not permitted
+	if (cred->cr_uid != 0) 
 		return (EPERM);
-
-	if (proc && proc->p_prison && !(flag & PRISON_ROOT)) // if process is jailed and user is not prison_root
-		return (EPERM); // operation not permitted
-
+    //
+    // by this line the current user is root
+    //
+    // if current process is valid, it has a prison associated (it is a jailed process)
+    // but the flag PRISON_ROOT is not set
+    // then -> operation not permitted
+	if (proc && proc->p_prison && !(flag & PRISON_ROOT)) 
+		return (EPERM);
+    //
+    // if process is valid and it should be by now
+    // add flag ASU to accounting flags variable wihtin process struct
+    // it states that the user of the process used superuser powers
 	if (proc)
 		proc->p_acflag |= ASU;
 
@@ -958,28 +979,47 @@ suser_xxx(cred, proc, flag)
  * Return zero if p1 can fondle p2, return errno (EPERM/ESRCH) otherwise.
  */
 
+// suplimentary checks needed to be added 
+// in order to check p1 and p2 affiliation
+// besides the implied credential checking
+// to be allowed to fondle, p1 and p2 have to be in the same jail
+// that if p1 is an inmate 
 int
 p_trespass(struct proc *p1, struct proc *p2)
 {
-
+    // if p1 and p2 point to the same process structre they should not be isolated
 	if (p1 == p2)
 		return (0);
-	if (!PRISON_CHECK(p1, p2)) // MACRO: proc1 is in jail and proc2 is in other jail
-		return (ESRCH); // error-search -> proc2 "does not exist" -> proc isolation
-                        // UNIX error code (integer 3)
-                        //
-	if (p1->p_cred->p_ruid == p2->p_cred->p_ruid) // processes real user's id from credentials are the same
+    // this MACRO checks if p1 and p2 are in the same jail
+    // that if p1 (the initiator :) ) is part of prison itself
+    //
+    // if the condition is not met ESRCH is thrown
+    // which is a UNIX error code (int 3)
+    // it means Error-Search, which leadss to process isolation
+    //
+	if (!PRISON_CHECK(p1, p2)) 
+		return (ESRCH); 
+     
+    // these are a series of credential checks
+    // unrelated to jails
+	if (p1->p_cred->p_ruid == p2->p_cred->p_ruid)
 		return (0);
-	if (p1->p_ucred->cr_uid == p2->p_cred->p_ruid) // prc 1 user credential is the same with proc 2 real user cred
+	if (p1->p_ucred->cr_uid == p2->p_cred->p_ruid)
 		return (0);
-	if (p1->p_cred->p_ruid == p2->p_ucred->cr_uid) // reverse order
+	if (p1->p_cred->p_ruid == p2->p_ucred->cr_uid)
 		return (0);
-	if (p1->p_ucred->cr_uid == p2->p_ucred->cr_uid) // user cred of the procs are the same
+	if (p1->p_ucred->cr_uid == p2->p_ucred->cr_uid)
 		return (0);
-    // by this line if proc1 is in jail, proc2 is in the same jail
-	if (!suser_xxx(0, p1, PRISON_ROOT)) // if proc1 is in jail, check if is the prison_root
-		return (0);// check if p1 user is su, even if is in jail or not
-	return (EPERM); // otherwise operation not permitted
+    //
+    // by this line if p1 is in jail, p2 shares the same jail
+    //
+    // it now check is p1 is the superuser of its jail
+    // or just a simple superuser, it doesn't have to be within a prison
+    //
+    // if conditin is not met -> operation not permitted
+	if (!suser_xxx(0, p1, PRISON_ROOT))
+		return (0);
+	return (EPERM);
 }
 
 /*
