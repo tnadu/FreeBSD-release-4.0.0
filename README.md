@@ -100,4 +100,4 @@ FUNC -> PRISON_CHECK()
 - #define PRISON_CHECK(p1, p2) ((!(p1)->p_prison) || (p1)->p_prison == (p2)->p_prison)
 ```
 
-#### 📌 [`procfs_vnops.c`](‎miscfs/procfs/procfs_vnops.c)
+#### 📌 [`procfs_vnops.c`](miscfs/procfs/procfs_vnops.c)
