@@ -71,3 +71,33 @@ ifconf()/sysctl_iflist() → prison_if()
 - void prison_remote_ip(struct proc *p, int flag, u_int32_t *ip);
 - int prison_if(struct proc *p, struct sockaddr *sa);
 ```
+
+
+## Processes
+### Basic flow
+```
+either
+FUNC -> p_trespass() -> PRISON_CHECK()
+-> this case is used whenever superuser privileges are needed
+
+or
+FUNC -> PRISON_CHECK()
+
+* where FUNC := any function that requests other proc's resources
+```
+
+### Files
+#### 📌 [`kern_prot.c`](kern/kern_prot.c)
+
+```c
+- int p_trespass(struct proc *p1, struct proc *p2);
+- int suser_xxx(cred, proc, flag);
+```
+
+#### 📌 [`proc.h`](sys/proc.h)
+
+```c
+- #define PRISON_CHECK(p1, p2) ((!(p1)->p_prison) || (p1)->p_prison == (p2)->p_prison)
+```
+
+#### 📌 [`procfs_vnops.c`](sys/‎miscfs/procfs/procfs_vnops.c)
