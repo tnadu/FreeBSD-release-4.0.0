@@ -117,7 +117,9 @@ struct vnode {
 	struct	simplelock v_interlock;		/* lock on usecount and flag */
 	struct	lock *v_vnlock;			/* used for non-locking fs's */
 	enum	vtagtype v_tag;			/* type of underlying data */
-	void 	*v_data;			/* private data for fs */
+
+	void 	*v_data;			/* private data for fs */               // -> this is used wihtin procfs_open
+
 	LIST_HEAD(, namecache) v_cache_src;	/* Cache entries from us */
 	TAILQ_HEAD(, namecache) v_cache_dst;	/* Cache entries to us */
 	struct	vnode *v_dd;			/* .. vnode */
