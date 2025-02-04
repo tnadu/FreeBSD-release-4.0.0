@@ -120,44 +120,81 @@ static pid_t atopid __P((const char *, u_int));
  * is to support exclusive open on process
  * memory images.
  */
+
+// this function modifies the access flags of a process
+// that our current process is trying to access
+// a new prison check is added to sustain jail implementation
 static int
 procfs_open(ap)
-    // vop = virtual operation -> op on virtual node
-    // within VFS virtual file system
+    // the function takes as arguments, among others
+    // the virtual node structure is trying to access
+    // and the current process
 	struct vop_open_args /* {
-		struct vnode *a_vp;  // virtual node
+		struct vnode *a_vp;  // pfsnode (proc file system node) ready to be casted
 		int  a_mode;
 		struct ucred *a_cred;
-		struct proc *a_p;
+		struct proc *a_p; // current process, the one initiating access
 	} */ *ap;
 {
-	struct pfsnode *pfs = VTOPFS(ap->a_vp); // process file-system node
-                                            //  takes private data of fs (v_data) of (vnode)ap->a_vp and casts it
-                                            //  to pfsnode -> proc fs node
+    // VTOPFS is a MACRO definition that extract the v_data of the given vnode
+    // which is the private data of the file-system, in this case, procfs
+    // and casts it to a struct of pfsnode, process file system node
+	struct pfsnode *pfs = VTOPFS(ap->a_vp);
+    
 	struct proc *p1, *p2;
-
+    
+    // PFIND is a MACRO definition that searches for the pid
+    // of the coresponding pfsnode's process
+    // and returns the process structure pointer of it,
+    // or address of proc0, which is the kernel process,
+    // if searched pid is null
+    //
+    // returns no entity error upon failure
 	p2 = PFIND(pfs->pfs_pid);
 	if (p2 == NULL)
-		return (ENOENT); // no pid, no entity
-
-	if (pfs->pfs_pid && !PRISON_CHECK(ap->a_p, p2)) // there is a pid, is a_p argument inside vop_open_args
-                                                    // in prison, and if so, is in the same prison with 
-                                                    // p2, current process
-                                                    //
+		return (ENOENT);
+    
+    // if pfs pid is not null (p2 is not proc0 in this case)
+    // an in-jail checkup is done
+    // if current process is in jail, then p2, the queried process
+    // needs to be in the same jail 
+    //
+    // otherwise, no entity error is returned, which facilitates
+    // process isolation outside of jails, they are considered invisible
+	if (pfs->pfs_pid && !PRISON_CHECK(ap->a_p, p2))
 		return (ENOENT);
 
 	switch (pfs->pfs_type) {
+    // if current pfsnode represents a process memory image
 	case Pmem:
+        // if FWRITE or O_EXECL flags are detected
+        // then, resource busy error is returned,
+        // the processes images are locked upon current job termination
 		if (((pfs->pfs_flags & FWRITE) && (ap->a_mode & O_EXCL)) ||
 		    ((pfs->pfs_flags & O_EXCL) && (ap->a_mode & FWRITE)))
 			return (EBUSY);
 
 		p1 = ap->a_p;
-
+        
+        // this function p_trespass checks whether p1 is eligible to request
+        // access to p2's resources, that include a jail check
+        //
+        // if the 2 processes are eligible for trespassing
+        //
+        // according to procfs_kmemaccess, 
+        // p1 needs to have a superuser or it should be part of a KMEM_GROUP
+        // a group of users which are allowed acces to 
+        // virtual memory read and write privileges
+        //
+        // in order to be allowed access to p2
+        //
+        // otherwise, operatin not permitted UNIX code is returned instead
 		if (p_trespass(p1, p2) &&
-		    !procfs_kmemaccess(p1)) // trespass
+		    !procfs_kmemaccess(p1))
 			return (EPERM);
-
+        
+        // if all these conditions are satisfied. p2 access flags are updated
+        // and access is granted to p1
 		if (ap->a_mode & FWRITE)
 			pfs->pfs_flags = ap->a_mode & (FWRITE|O_EXCL);
 
@@ -229,10 +266,15 @@ procfs_close(ap)
  * do an ioctl operation on a pfsnode (vp).
  * (vp) is not locked on entry or exit.
  */
+
+// this function treats requests from userland to the kernel
 static int
 procfs_ioctl(ap)
 	struct vop_ioctl_args *ap;
 {
+    // same operations are done as previously seen on procf_open
+    // this time pfs is the initiator pfsnode, coresponds to procp process
+    // and p is the requested process
 	struct pfsnode *pfs = VTOPFS(ap->a_vp);
 	struct proc *procp, *p;
 	int error;
@@ -246,6 +288,10 @@ procfs_ioctl(ap)
 		return ENOTTY;
 	}
 
+    // p needs to be eligible to access procp
+    // that also means to reside in the same jail if p is an inmate
+    //
+    // otherwise operatin not permitted
 	if (p_trespass(p, procp))
 		return EPERM;
 
@@ -785,6 +831,8 @@ procfs_validfile(p)
  * We generate just one directory entry at a time, as it would probably
  * not pay off to buffer several entries locally to save uiomove calls.
  */
+
+// this functions reads data from the /proc specific sub-directories
 static int
 procfs_readdir(ap)
 	struct vop_readdir_args /* {
@@ -798,19 +846,29 @@ procfs_readdir(ap)
 {
 	struct uio *uio = ap->a_uio;
 	struct dirent d;
+    // dp is the dir-entry pointer
+    //
 	struct dirent *dp = &d;
 	struct pfsnode *pfs;
 	int count, error, i, off;
 	static u_int delen;
-
+    
+    // delen is the current directory entry length
+    //
 	if (!delen) {
 
 		d.d_namlen = PROCFS_NAMELEN;
+        // this MACRO definition GENERIC_DIRSIZ gives the minimum record size
+        // for defining a directory entry
+        // that is size of struct + euristic size for name length and null terminator
 		delen = GENERIC_DIRSIZ(&d);
 	}
 
 	pfs = VTOPFS(ap->a_vp);
-
+    
+    // the offset is the offset of 
+    // the current sub-directory opened for user
+    //
 	off = (int)uio->uio_offset;
 	if (off != uio->uio_offset || off < 0 || 
 	    off % delen != 0 || uio->uio_resid < delen)
@@ -818,6 +876,9 @@ procfs_readdir(ap)
 
 	error = 0;
 	count = 0;
+
+    // i is the index of the current sub-sirectory opened for user
+    //
 	i = off / delen;
 
 	switch (pfs->pfs_type) {
@@ -833,6 +894,11 @@ procfs_readdir(ap)
 		p = PFIND(pfs->pfs_pid);
 		if (p == NULL)
 			break;
+        // in order to access sub-directory data within target proc p
+        // current process, curproc, must share the prison with p
+        // if it, itself, is a jailed process
+        //
+        // no superuser checks are done this time
 		if (!PRISON_CHECK(curproc, p))
 			break;
 
@@ -868,10 +934,15 @@ procfs_readdir(ap)
 		int doingzomb = 0;
 #endif
 		int pcnt = 0;
+
+        // this takes a pointer to the first process of a list
+        // of processes that are visible to current file-system root
 		volatile struct proc *p = allproc.lh_first;
 
 		for (; p && uio->uio_resid >= delen; i++, pcnt++) {
 			bzero((char *) dp, delen);
+            // this is the length of a record
+            //
 			dp->d_reclen = delen;
 
 			switch (i) {
@@ -892,19 +963,32 @@ procfs_readdir(ap)
 				break;
 
 			default:
+                // the current directory offset is greater than 2
+                // for all processes up to index i
 				while (pcnt < i) {
 					p = p->p_list.le_next;
 					if (!p)
 						goto done;
+                    //
+                    // ignore all the processes from list p_list 
+                    // that are not in the same jail with the current process
+                    //
 					if (!PRISON_CHECK(curproc, p))
 						continue;
 					pcnt++;
 				}
+                // if there are remaining processes in the list, 
+                // prison check as well with the current process
+                // up to the first process which is in the same jail
+                // or the end of the list
+                //
+                // it gets to the pcnt'th process which is in the same jail with current process
 				while (!PRISON_CHECK(curproc, p)) {
 					p = p->p_list.le_next;
 					if (!p)
 						goto done;
 				}
+                // and name this dir entry after their pid
 				dp->d_fileno = PROCFS_FILENO(p->p_pid, Pproc);
 				dp->d_namlen = sprintf(dp->d_name, "%ld",
 				    (long)p->p_pid);
