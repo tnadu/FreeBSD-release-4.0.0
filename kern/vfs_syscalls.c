@@ -773,8 +773,7 @@ struct fchdir_args {
 };
 #endif
 /* ARGSUSED */
-int
-fchdir(p, uap)
+int fchdir(p, uap)
 	struct proc *p;
 	struct fchdir_args /* {
 		syscallarg(int) fd;
@@ -824,8 +823,7 @@ struct chdir_args {
 };
 #endif
 /* ARGSUSED */
-int
-chdir(p, uap)
+int chdir(p, uap)
 	struct proc *p;
 	struct chdir_args /* {
 		syscallarg(char *) path;
@@ -943,6 +941,8 @@ int chroot(p, uap)
 	error = suser_xxx(0, p, PRISON_ROOT);
 	if (error)
 		return (error);
+
+	// prevent fchdir escape
 	if (chroot_allow_open_directories == 0 ||
 	    (chroot_allow_open_directories == 1 && fdp->fd_rdir != rootvnode))
 		error = chroot_refuse_vdir_fds(fdp);
@@ -984,13 +984,17 @@ static int change_dir(ndp, p)
 	if (error)
 		return (error);
 	vp = ndp->ni_vp;
+
 	if (vp->v_type != VDIR)
 		error = ENOTDIR;
 	else
+		// check access permission
 		error = VOP_ACCESS(vp, VEXEC, p->p_ucred, p);
 	if (error)
+		// decrement vnode count
 		vput(vp);
 	else
+		// useless info
 		VOP_UNLOCK(vp, 0, p);
 	return (error);
 }
