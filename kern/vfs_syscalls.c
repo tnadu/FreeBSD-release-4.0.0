@@ -773,8 +773,7 @@ struct fchdir_args {
 };
 #endif
 /* ARGSUSED */
-int
-fchdir(p, uap)
+int fchdir(p, uap)
 	struct proc *p;
 	struct fchdir_args /* {
 		syscallarg(int) fd;
@@ -824,8 +823,7 @@ struct chdir_args {
 };
 #endif
 /* ARGSUSED */
-int
-chdir(p, uap)
+int chdir(p, uap)
 	struct proc *p;
 	struct chdir_args /* {
 		syscallarg(char *) path;
@@ -852,8 +850,10 @@ chdir(p, uap)
  * descriptors later to change dir into them, effectively bypassing
  * the initial chroot
  */
-static int
-chroot_refuse_vdir_fds(fdp)
+
+// to avoid fchdir escape
+// if there is a vnode of type directory, it return EPERM (denies permission)
+static int chroot_refuse_vdir_fds(fdp)
 	struct filedesc *fdp; // contains linked list of open files (file/dir)
 {
 	struct vnode *vp;
@@ -861,10 +861,15 @@ chroot_refuse_vdir_fds(fdp)
 	int error;
 	int fd;
 
+	// iterate over all open files/dirs/etc and if there is a directory open, return EPERM
 	for (fd = 0; fd < fdp->fd_nfiles ; fd++) {
+
 		error = getvnode(fdp, fd, &fp); // helper function to aqcuire the vnode of the file
 		if (error)
 			continue;
+
+		// casts the file->caddr_t to vnode and if the vnode is of type directory,
+		// it denies permission returning EPERM.
 		vp = (struct vnode *)fp->f_data;
 		if (vp->v_type != VDIR)
 			continue;
@@ -904,19 +909,31 @@ struct chroot_args {
 	//jdir = c
 	//rootdir = b
 
-// 
+//
 
 // a -> b - > c
+// chroot
 
 
-int
-chroot(p, uap)
+// ! Modifies:
+// 	- root directory: (fd_rdir)
+// 	- jail root directory if not already set: (fd_jdir)
+// ! DOES NOT MODIFY:
+//  - current directory: (fd_cdir)
+
+int chroot(p, uap)
 	struct proc *p;
 	// chroot_args contains a char* with the path of the directory in which to chroot()
 	struct chroot_args /* {
 		syscallarg(char *) path;
 	} */ *uap;
 {
+	// uap = char* , contins the target path
+	// fpd = filedesc of p:
+			// struct  vnode *fd_cdir;         /* current directory */
+			// struct  vnode *fd_rdir;         /* root directory */
+			// struct  vnode *fd_jdir;         /* jail root directory */
+	//
 	register struct filedesc *fdp = p->p_fd;
 	int error;
 	struct nameidata nd;
@@ -924,19 +941,28 @@ chroot(p, uap)
 	error = suser_xxx(0, p, PRISON_ROOT);
 	if (error)
 		return (error);
+
+	// prevent fchdir escape
 	if (chroot_allow_open_directories == 0 ||
 	    (chroot_allow_open_directories == 1 && fdp->fd_rdir != rootvnode))
 		error = chroot_refuse_vdir_fds(fdp);
 	if (error)
 		return (error);
+
+	// initializes nameidata with target path
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_USERSPACE,
 	    SCARG(uap, path), p);
+
 	// the chroot path is passed to change_dir via nd
 	if ((error = change_dir(&nd, p)) != 0)
 		return (error);
+
 	NDFREE(&nd, NDF_ONLY_PNBUF);
 	vrele(fdp->fd_rdir);
+
+	// modifies root directory to be the corresponding vnode of the target path
 	fdp->fd_rdir = nd.ni_vp;
+	// if jail root is not set, is is also set to be the corresponding vnode of the target path
 	if (!fdp->fd_jdir) {
 		fdp->fd_jdir = nd.ni_vp;
                 VREF(fdp->fd_jdir);
@@ -947,8 +973,7 @@ chroot(p, uap)
 /*
  * Common routine for chroot and chdir.
  */
-static int
-change_dir(ndp, p)
+static int change_dir(ndp, p)
 	register struct nameidata *ndp;
 	struct proc *p;
 {
@@ -959,13 +984,17 @@ change_dir(ndp, p)
 	if (error)
 		return (error);
 	vp = ndp->ni_vp;
+
 	if (vp->v_type != VDIR)
 		error = ENOTDIR;
 	else
+		// check access permission
 		error = VOP_ACCESS(vp, VEXEC, p->p_ucred, p);
 	if (error)
+		// decrement vnode count
 		vput(vp);
 	else
+		// useless info
 		VOP_UNLOCK(vp, 0, p);
 	return (error);
 }

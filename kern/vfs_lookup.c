@@ -77,11 +77,7 @@
  */
 
 // IMPORTANT:
-// does LOOKUP / CREATE / DELETE / RENAME
-// ndp->ni_topdir = fdp->fd_jdir;
-// ni_topdir is assiged fd_jdir, which is only modified at the first chroot.
-// 
-// ndp also contains the target path of chroot in ni_dirp
+// in our context does LOOKUP for a specified path
 int namei(ndp)
 	register struct nameidata *ndp;
 {
@@ -91,6 +87,8 @@ int namei(ndp)
 	struct iovec aiov;		/* uio for reading symbolic links */
 	struct uio auio;
 	int error, linklen;
+
+	// cnd = componentname of ndp
 	struct componentname *cnp = &ndp->ni_cnd;
 	// p is the process that calls namei from chdir
 	struct proc *p = cnp->cn_proc;
@@ -101,7 +99,8 @@ int namei(ndp)
 	    ("namei: nameiop contaminated with flags"));
 	KASSERT((cnp->cn_flags & OPMASK) == 0,
 	    ("namei: flags contaminated with nameiops"));
-	// fdp = filedesc* of process p
+
+	// fdp = filedesc* of process p, as in chroot
 	fdp = cnp->cn_proc->p_fd;
 
 	/*
@@ -137,17 +136,25 @@ int namei(ndp)
 	/*
 	 * Get starting point for the translation.
 	 */
+	// assigns ni_rootdir = root directory
+	// assigns ni_topdir = jail root directory
+	// assigns dp = current directory:
+	// 			- dp is fd_rdir in case path starts with '/', else fd_cdir
+
 	ndp->ni_rootdir = fdp->fd_rdir;
 	ndp->ni_topdir = fdp->fd_jdir;
-
-	// dp = current directory of calling process p at any point. Starts with fd_cdir.
 	dp = fdp->fd_cdir;
+
 	VREF(dp);
 	for (;;) {
 		/*
 		 * Check if root directory should replace current directory.
 		 * Done at start of translation and after symbolic link.
 		 */
+
+		// cn_nameptr = pointer to target path
+
+		// normalize consecutive '/'
 		cnp->cn_nameptr = cnp->cn_pnbuf;
 		if (*(cnp->cn_nameptr) == '/') {
 			vrele(dp);
@@ -155,11 +162,15 @@ int namei(ndp)
 				cnp->cn_nameptr++;
 				ndp->ni_pathlen--;
 			}
+			// if path starts with /, dp == root directory
 			dp = ndp->ni_rootdir;
 			VREF(dp);
 		}
+
+
+		// set starting directory as dp
 		ndp->ni_startdir = dp;
-		error = lookup(ndp);  // IMPORTANT 
+		error = lookup(ndp);  // IMPORTANT
 		if (error) {
 			zfree(namei_zone, cnp->cn_pnbuf);
 			return (error);
@@ -298,6 +309,8 @@ int lookup(ndp)
 	rdonly = cnp->cn_flags & RDONLY;
 	ndp->ni_dvp = NULL;
 	cnp->cn_flags &= ~ISSYMLINK;
+
+	// set dp as the starting directory
 	dp = ndp->ni_startdir;
 	ndp->ni_startdir = NULLVP;
 	vn_lock(dp, LK_EXCLUSIVE | LK_RETRY, p);
@@ -311,11 +324,14 @@ dirloop:
 	 * the name set the SAVENAME flag. When done, they assume
 	 * responsibility for freeing the pathname buffer.
 	 */
-	
-	// traverses characters until string finishes or '/' met
+
+	// traverses characters until string finishes or '/'
+	// met to derermine length of current component
 	cnp->cn_consume = 0;
 	for (cp = cnp->cn_nameptr; *cp != 0 && *cp != '/'; cp++)
 		continue;
+
+	// len of current path component
 	cnp->cn_namelen = cp - cnp->cn_nameptr;
 	if (cnp->cn_namelen > NAME_MAX) {
 		error = ENAMETOOLONG;
@@ -328,9 +344,9 @@ dirloop:
 	*cp = c; }
 #endif
 	ndp->ni_pathlen -= cnp->cn_namelen;
+	// point to the next character after the current component
 	ndp->ni_next = cp;
 
-	// cp is the remaining path at any moment
 
 	/*
 	 * Replace multiple slashes by a single slash and trailing slashes
@@ -339,11 +355,8 @@ dirloop:
 	 * trailing slashes to handle symlinks, existing non-directories
 	 * and non-existing files that won't be directories specially later.
 	 */
-	
-	// BEFORE: //../
-	// AFTER:  ../
 
-	// removes consecutive '/' 
+	// removes consecutive '/'
 	trailing_slash = 0;
 	while (*cp == '/' && (cp[1] == '/' || cp[1] == '\0')) {
 		cp++;
@@ -353,9 +366,10 @@ dirloop:
 			*ndp->ni_next = '\0';	/* XXX for direnter() ... */
 		}
 	}
-	// cp = '..'
+	// points to the start of the next component after consecutive slashes
 	ndp->ni_next = cp;
 
+	// handle degenerate names
 	cnp->cn_flags |= MAKEENTRY;
 	if (*cp == '\0' && docache == 0)
 		cnp->cn_flags &= ~MAKEENTRY;
@@ -388,6 +402,7 @@ dirloop:
 			ndp->ni_dvp = dp;
 			VREF(dp);
 		}
+		// set result vnode as dp (previously set as starting directory)
 		ndp->ni_vp = dp;
 		if (!(cnp->cn_flags & (LOCKPARENT | LOCKLEAF)))
 			VOP_UNLOCK(dp, 0, p);
@@ -409,27 +424,17 @@ dirloop:
 	 * 3. If the vnode is the top directory of
 	 *    the jail or chroot, don't let them out.
 	 */
-	// IMPORTANT: 
-
-	// a -> b -> c (jdir = c, rootdir = c)
-	// a -> b      (jdir = c, rootdir = b)
-	// a -> b -> c (jdir = a, rootdir = c, dp = b)
-	// a -> b -> c (jdir = c, rootdir = b)
-	//      c = jdir (topdir) 
-
-	// ni_rootdir = c
-	// ni_toptdir = c
-	// ni_startdir = c
-	// dp = c
-	// cnp->cn_nameptr == '..'
-
+	// IMPORTANT:
 	// dp = ni_rootdir if  ni_dirp[0] == '/' else p->p_fd->fd_cdir
 
 	if (cnp->cn_flags & ISDOTDOT) {
 		for (;;) {
+			// If the current directory (dp) is one of these, the process is not allowed to escape by following ...
+			// Instead of continuing upwards, it remains at the current directory and proceeds to the next path component (goto nextname).
 			if (dp == ndp->ni_rootdir || 
 			    dp == ndp->ni_topdir || 
 			    dp == rootvnode) {
+				// instead of continuing upwards, the lookup continues with the same directory
 				ndp->ni_dvp = dp;
 				ndp->ni_vp = dp;
 
@@ -439,6 +444,7 @@ dirloop:
 				VREF(dp);
 				goto nextname;
 			}
+			// If the current directory is not the root of a mounted filesystem or if crossing mount points is prohibited
 			if ((dp->v_flag & VROOT) == 0 ||
 			    (cnp->cn_flags & NOCROSSMOUNT))
 				break;
@@ -450,6 +456,7 @@ dirloop:
 		}
 	}
 
+
 	/*
 	 * We now have a segment name to search for, and a directory to search.
 	 */
@@ -457,6 +464,7 @@ unionlookup:
 	ndp->ni_dvp = dp;
 	ndp->ni_vp = NULL;
 	ASSERT_VOP_LOCKED(dp, "lookup");
+	// If successful, ndp->ni_vp will point to the next vnode.
 	if ((error = VOP_LOOKUP(dp, &ndp->ni_vp, cnp)) != 0) {
 		KASSERT(ndp->ni_vp == NULL, ("leaf should be empty"));
 #ifdef NAMEI_DIAGNOSTIC
@@ -557,12 +565,17 @@ unionlookup:
 	}
 
 nextname: // IMPORTANT
+	//The nextname label is the entry point for processing the next component in the path.
+	//  If there’s more of the path left to process (indicated by / after the current component),
+	//  it continues parsing the next part. Otherwise, it finishes the lookup.
+	
 	/*
 	 * Not a symbolic link.  If more pathname,
 	 * continue at next component, else return.
 	 */
 	if (*ndp->ni_next == '/') {
 		cnp->cn_nameptr = ndp->ni_next;
+		// skip multiple consecutive slashes
 		while (*cnp->cn_nameptr == '/') {
 			cnp->cn_nameptr++;
 			ndp->ni_pathlen--;
@@ -570,7 +583,7 @@ nextname: // IMPORTANT
 		if (ndp->ni_dvp != ndp->ni_vp)
 			ASSERT_VOP_UNLOCKED(ndp->ni_dvp, "lookup");
 		vrele(ndp->ni_dvp);
-		goto dirloop;
+		goto dirloop; // Go back to handle the next component
 	}
 	/*
 	 * Disallow directory write attempts on read-only file systems.
@@ -600,6 +613,9 @@ bad:
 	ndp->ni_vp = NULL;
 	return (error);
 }
+
+
+
 
 /*
  * relookup - lookup a path name component
